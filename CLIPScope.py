@@ -25,7 +25,7 @@ def get_features(text, model, normalize = True):
 nouns = torch.load('sorted_nouns.pt')
 
 m = torch.nn.Softmax()
-device = "cuda:2" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 model, preprocess = clip.load('ViT-B/16', device)
 with open('imagenet_class_clean.npy', 'rb') as f:
     imagenet_cls = np.load(f)

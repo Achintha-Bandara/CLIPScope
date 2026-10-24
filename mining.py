@@ -6,7 +6,7 @@ import numpy as np
 
 nouns = torch.load('nouns.pt')
 nouns = np.array(nouns)
-device = "cuda:2" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 model, preprocess = clip.load('ViT-B/16', device)
 with open('imagenet_class_clean.npy', 'rb') as f:
     imagenet_cls = np.load(f)
@@ -26,6 +26,13 @@ with torch.no_grad():
         value, index = torch.kthvalue(similarity, percentile)
         scores.append(-value.cpu().numpy())
 
-my_list = scores
-sorted_indices = sorted(range(len(my_list)), key=lambda x: my_list[x])
-torch.save(sorted_indices, 'sorted_nouns.pt')
+scores = np.asarray(scores, dtype=np.float32)
+sorted_indices = np.argsort(scores)
+
+# Modified to save actual noun strings, not integer indices
+sorted_nouns = [str(nouns[i]) for i in sorted_indices]
+torch.save(sorted_nouns, "sorted_nouns.pt")
+
+print("Total nouns:", len(sorted_nouns))
+print("Lowest-ranked nouns:", sorted_nouns[:10])
+print("Highest-ranked nouns:", sorted_nouns[-10:])
