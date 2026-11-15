@@ -1,17 +1,3 @@
-"""Mini version of CLIPScope.py, following the paper's protocol.
-
-Kept from the original run():
-  * text bank = ID prompts + nouns[:M] + nouns[-M:]; first half of the OOD labels
-    "a photo of a {c}", second half "a photo of {c}"; tau = 0.01 (x100)
-  * histogram prior with counts initialised to 1 and updated after scoring
-  * confidence = p1 * p2 / p0; AUROC and FPR at the first TPR > 0.95 (ID positive)
-Changes (speed / reporting only):
-  * images are encoded once (cached); the stream is replayed on features
-  * p1, p2, p0 are logged, so all six g variants of the paper's Table 2 come from one pass
-  * M defaults to 5 * N (paper: M = 5000 for N = 1000 classes)
-  * stream orders random (mean of --trials, paper: 5), forward (ID first), reverse (OOD first)
-  * --labels both | nearest | farthest reproduces the label-space ablation of Table 2
-"""
 import argparse
 import json
 from pathlib import Path

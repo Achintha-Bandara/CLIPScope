@@ -1,13 +1,3 @@
-"""Mini version of mining.py (same procedure, only the ID label set changes).
-
-Original: 50th-largest similarity to the 1000 ImageNet classes (eta = 5%),
-prompt "the <noun>", sort ascending (first = farthest, last = nearest).
-Mini:     percentile = ceil(eta * N) for N ID classes (N=100 -> 5).
-Changes vs original: noun encoding is batched (same maths); ID class names are
-NOT removed from the noun list (like the original; --drop-id-names to remove them);
-the mining prompt is configurable (paper's Alg. 1 says "a photo of a {}", the
-released code uses "the {}"; default here = released code).
-"""
 import argparse
 import json
 import math
