@@ -1,127 +1,75 @@
+import argparse
+import math
 from pathlib import Path
 
 import numpy as np
 import torch
-import clip
 
+from mini_common import load_clip, encode_texts, get_dataset, class_names
 
 ROOT = Path(__file__).resolve().parent
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-ID_CLASSES = ["airplane", "automobile", "bird", "cat", "deer"]
-MAX_CANDIDATES = 2000
-M = 50
-PERCENTILE = 0.05
-TEXT_BATCH_SIZE = 64
-
-# Used when the optional nouns.pt generated from WordNet is unavailable.
-FALLBACK_NOUNS = [
-    "apple", "backpack", "balloon", "banana", "bed", "bench", "bicycle",
-    "blanket", "boat", "book", "bottle", "box", "bread", "bridge",
-    "bucket", "bus", "butterfly", "cabinet", "camera", "candle", "carrot",
-    "castle", "chair", "clock", "cloud", "coat", "computer", "couch",
-    "desk", "door", "drum", "elephant", "engine", "factory", "feather",
-    "fence", "flower", "fork", "forest", "fridge", "guitar", "hammer",
-    "hat", "helicopter", "horse", "house", "island", "jacket", "keyboard",
-    "knife", "lamp", "laptop", "leaf", "lion", "mountain", "mouse",
-    "mushroom", "ocean", "orange", "pancake", "parachute", "pencil",
-    "penguin", "phone", "piano", "pizza", "plane", "plate", "pumpkin",
-    "rabbit", "rainbow", "river", "robot", "rocket", "rose", "scooter",
-    "ship", "shoe", "skateboard", "snake", "sofa", "spoon", "square",
-    "star", "strawberry", "street", "suitcase", "sunflower", "table",
-    "telephone", "television", "tent", "tiger", "train", "truck", "umbrella",
-    "vase", "violin", "wallet", "watermelon", "wheel", "window", "zebra",
-]
 
 
-def load_candidates():
+def load_nouns():
     path = ROOT / "nouns.pt"
     if path.exists():
-        try:
-            candidates = torch.load(path, weights_only=False)
-        except TypeError:
-            candidates = torch.load(path)
-        if not isinstance(candidates, (list, tuple, set)):
-            raise TypeError(f"{path} must contain a list-like noun collection.")
-        source = str(path)
+        nouns = torch.load(path, weights_only=False)
+        print(f"Loaded {len(nouns)} nouns from {path}")
     else:
-        candidates = FALLBACK_NOUNS
-        source = "built-in fallback vocabulary (nouns.pt not found)"
-
-    candidates = {
-        str(word).replace("_", " ").strip().lower()
-        for word in candidates
-        if str(word).strip()
-    }
-    candidates.difference_update(ID_CLASSES)
-    candidates = sorted(candidates)
-    return candidates[:MAX_CANDIDATES], source
-
-
-def encode_texts(model, prompts, batch_size=64):
-    if not prompts:
-        raise ValueError("Cannot encode an empty prompt collection.")
-
-    features = []
-    with torch.no_grad():
-        for start in range(0, len(prompts), batch_size):
-            tokens = clip.tokenize(prompts[start:start + batch_size]).to(DEVICE)
-            batch = model.encode_text(tokens).float()
-            norms = batch.norm(dim=-1, keepdim=True)
-            if torch.any(norms == 0):
-                raise ValueError("CLIP returned a zero-norm text embedding.")
-            batch /= norms
-            features.append(batch)
-    return torch.cat(features)
-
-
-def percentile_index(size, percentile):
-    if size < 1 or not 0 < percentile <= 1:
-        raise ValueError("size must be positive and percentile must be in (0, 1].")
-    return max(1, min(size, int(np.ceil(size * percentile))))
+        import nltk
+        from nltk.corpus import wordnet as wn
+        nltk.download("wordnet", quiet=True)
+        nouns = set()
+        for syn in wn.all_synsets("n"):
+            for lemma in syn.lemma_names():
+                # single lowercase words only (drops proper nouns / multiword)
+                if lemma.isalpha() and lemma.islower():
+                    nouns.add(lemma)
+        nouns = sorted(nouns)
+        torch.save(nouns, path)
+        print(f"Built {len(nouns)} WordNet nouns -> {path}")
+    return [str(n).replace("_", " ") for n in nouns]
 
 
 def main():
-    candidates, source = load_candidates()
-    if len(candidates) < 2 * M:
-        raise ValueError(
-            f"Need at least {2 * M} candidate nouns, but found {len(candidates)}."
-        )
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--id", default="cifar100")
+    ap.add_argument("--model", default="ViT-B/16")
+    ap.add_argument("--percentile", type=float, default=0.05)
+    ap.add_argument("--max-nouns", type=int, default=None,
+                    help="random subsample of the noun list (speed on CPU)")
+    ap.add_argument("--keep-id-names", action="store_true",
+                    help="do not remove nouns that equal an ID class name")
+    args = ap.parse_args()
 
-    model, _ = clip.load("ViT-B/16", device=DEVICE)
-    model.eval()
+    id_classes = class_names(get_dataset(args.id))
+    nouns = load_nouns()
+    if not args.keep_id_names:
+        id_set = set(id_classes)
+        nouns = [n for n in nouns if n not in id_set]
+    if args.max_nouns and args.max_nouns < len(nouns):
+        rng = np.random.RandomState(0)
+        nouns = [nouns[i] for i in rng.choice(len(nouns), args.max_nouns, replace=False)]
 
-    id_features = encode_texts(
-        model, [f"a photo of a {label}" for label in ID_CLASSES]
-    )
-    candidate_features = encode_texts(
-        model,
-        [f"a photo of a {word}" for word in candidates],
-        batch_size=TEXT_BATCH_SIZE,
-    )
+    model, _ = load_clip(args.model)
+    id_feat = encode_texts(model, [f"a photo of a {c}" for c in id_classes])
 
-    negative_cosine = -(candidate_features @ id_features.T)
-    kth = percentile_index(len(ID_CLASSES), PERCENTILE)
-    distances = torch.kthvalue(negative_cosine, kth, dim=1).values
-    order = torch.argsort(distances).cpu().tolist()
+    k = max(1, math.ceil(len(id_classes) * args.percentile))
+    print(f"ID classes: {len(id_classes)}  ->  k = {k} ({args.percentile:.0%})")
 
-    ranked_nouns = [candidates[index] for index in order]
-    ranked_path = ROOT / "mini_sorted_nouns.pt"
-    selected_path = ROOT / "mini_ood_labels.pt"
-    torch.save(ranked_nouns, ranked_path)
+    noun_feat = encode_texts(model, ["the " + w for w in nouns])   # same prompt as original
+    sim = noun_feat @ id_feat.T                                   # N x C
+    scores = torch.topk(sim, k, dim=1).values[:, -1].numpy()      # k-th largest similarity
 
-    nearest = ranked_nouns[:M]
-    farthest = ranked_nouns[-M:][::-1]
-    selected = farthest + nearest
-    torch.save(selected, selected_path)
+    order = np.argsort(scores)                                    # ascending
+    sorted_nouns = [nouns[i] for i in order]
+    out = ROOT / f"sorted_nouns_{args.id}.pt"
+    torch.save(sorted_nouns, out)
 
-    print(f"Candidate source: {source}")
-    print(f"Candidates: {len(candidates)}")
-    print(f"Percentile: {PERCENTILE:.0%} ({kth}th order statistic)")
-    print(f"Selected OOD labels: {len(selected)}")
-    print(f"Saved ranked nouns to {ranked_path}")
-    print(f"Saved selected labels to {selected_path}")
-    print(f"Farthest labels: {farthest}")
-    print(f"Nearest labels: {nearest}")
+    print("Total nouns:", len(sorted_nouns))
+    print("Farthest from ID:", sorted_nouns[:10])
+    print("Nearest to ID:", sorted_nouns[-10:])
+    print("Saved", out)
 
 
 if __name__ == "__main__":
