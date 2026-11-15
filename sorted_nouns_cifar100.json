@@ -1,0 +1,1 @@
+{"id": "cifar100", "model": "ViT-B/16", "eta": 0.05, "template": "the {}", "drop_id_names": false}

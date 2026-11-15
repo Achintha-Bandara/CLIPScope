@@ -1,3 +1,4 @@
+#Original CLIPScope
 import os
 from imagenetv2_pytorch import ImageNetV2Dataset
 from scipy.special import softmax

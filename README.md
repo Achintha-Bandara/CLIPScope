@@ -38,3 +38,16 @@ python mining.py
 ```
 python CLIPScope.py
 ```
+
+## Scaled mini implementation
+
+The mini implementation uses torchvision datasets and writes dataset-specific
+mined labels. Run the mining step first:
+
+```
+python mini_mining.py --id cifar100
+python mini_CLIPScope.py --id cifar100
+```
+
+The current workflow reads `sorted_nouns_<dataset>.pt`. The older
+`mini_sorted_nouns.pt` and `mini_ood_labels.pt` files are no longer used.
